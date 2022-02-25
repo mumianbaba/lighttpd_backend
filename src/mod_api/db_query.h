@@ -17,7 +17,7 @@ struct UserInfo {
 };
 int get_user_info_from_backend(const char* username, struct UserInfo* info);
 
-int get_user_role_from_backend(const char* username);
+void clean_user_info(struct UserInfo* info);
 
 #endif
 

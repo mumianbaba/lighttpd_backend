@@ -1543,6 +1543,10 @@ mod_auth_check_digest (request_st * const r, void *p_d, const struct http_auth_r
           "digest: auth failed for %.*s: wrong password, IP: %s",
           (int)ai.ulen, ai.username, r->con->dst_addr_buf.ptr);
         r->keep_alive = -1; /*(disable keep-alive if bad password)*/
+
+		http_header_response_set(r, HTTP_HEADER_OTHER,
+							 CONST_STR_LEN("Auth-Result"),
+							 CONST_STR_LEN("passwd error"));
         return mod_auth_send_401_unauthorized_digest(r, require, 0);
     }
     /*ck_memzero(ai.digest, ai.dlen);*//* skip clear since mutated */

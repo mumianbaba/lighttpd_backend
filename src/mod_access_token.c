@@ -47,8 +47,8 @@ typedef struct {
     int token_timeout;
 	int refresh_timeout;
 	int token_number;
-    buffer *auth_url; // page to go when unauthorized
-	buffer *deauth_url; // page to go when unauthorized
+    const buffer *auth_url; // page to go when unauthorized
+	const buffer *deauth_url; // page to go when unauthorized
 } plugin_config;
 
 
@@ -160,17 +160,17 @@ SETDEFAULTS_FUNC(module_set_defaults) {
 		}
     }
 
-	plugin_config * user_conf = &p->defaults;
-	p->timeout_max = 1800;
-	user_conf->token_timeout = 1200;
-	user_conf->refresh_timeout = 2400;
-	user_conf->token_number = 2;
-	user_conf->auth_url = buffer_init();
-	user_conf->deauth_url =  buffer_init();
-	user_conf->enable = 1;
+	plugin_config * user_conf = &p->conf;
+	// p->timeout_max = 1800;
+	// user_conf->token_timeout = 1200;
+	// user_conf->refresh_timeout = 2400;
+	// user_conf->token_number = 2;
+	// user_conf->auth_url = buffer_init();
+	// user_conf->deauth_url =  buffer_init();
+	// user_conf->enable = 1;
 
-	buffer_copy_string(user_conf->auth_url, "/api/user/login");
-	buffer_copy_string(user_conf->deauth_url, "/api/user/logout");
+	// buffer_copy_string(user_conf->auth_url, "/api/user/login");
+	// buffer_copy_string(user_conf->deauth_url, "/api/user/logout");
 
 
 	log_error(srv->errh, __FILE__, __LINE__, "access token set default\n");
@@ -237,7 +237,7 @@ access_token_sptree_node_insert(plugin_data *p, int randtok[4],
     }
 
 	buffer* token_buf = buffer_init();
-	buffer_append_string_encoded_hex_lc(token_buf, (char *)randtok, sizeof(randtok));
+	buffer_append_string_encoded_hex_lc(token_buf, (char *)randtok, sizeof(spn->token));
 
     spn->ts = ts;
 	spn->role = role;
@@ -245,7 +245,7 @@ access_token_sptree_node_insert(plugin_data *p, int randtok[4],
     buffer_copy_string(spn->username, username);
 	buffer_copy_string(spn->field, token_buf->ptr);
 	buffer_free(token_buf);
-	fprintf(stderr, "%s:%d delete token:%s username:%s timestamp:%ld role:%d\n",
+	fprintf(stderr, "%s:%d insert token:%s username:%s timestamp:%ld role:%d\n",
 				__FILE__, __LINE__, spn->field->ptr
 				, spn->username->ptr, spn->ts, spn->role);
 	return;
@@ -294,25 +294,27 @@ FREE_FUNC(module_free) {
 	if(!p) return;
 
 	access_token_sptree_free(p->sptree);
-	buffer_free(p->defaults.auth_url);
-	buffer_free(p->defaults.deauth_url);
-	p->defaults.auth_url = NULL;
-	p->defaults.deauth_url = NULL;
+	// buffer_free(p->defaults.auth_url);
+	// buffer_free(p->defaults.deauth_url);
+	// p->defaults.auth_url = NULL;
+	// p->defaults.deauth_url = NULL;
     return;
 }
 
 
 static int authorization_extract_user(request_st *r, char* username, int len)
 {
-	if (!username || !r) return -1;
+	if (!username || !r) goto error;
+
 	memset(username,  0, len);
 	buffer * d = http_header_request_get(r, HTTP_HEADER_AUTHORIZATION,
 	                            CONST_STR_LEN("Authorization"));
-	if (!d) return -1;
+	if (!d) goto error;
 
 	
 	char* start =strstr(d->ptr, "username=");
-	if (!start) return -1;
+	if (!start) goto error;
+
 	start += strlen("username=");
 	if (*start == '"' || *start == '\'') {
 		start++;
@@ -327,22 +329,29 @@ static int authorization_extract_user(request_st *r, char* username, int len)
 	}
 	username[i] = '\0';
 	return 0;
+
+error:
+	log_error(r->conf.errh, __FILE__, __LINE__, "extract user error");
+	return -1;
 }
 
 static buffer* authorization_extract_Token(request_st *r, int* token, int size)
 {
 	buffer *b; 
 	b = http_header_request_get(r, HTTP_HEADER_OTHER, CONST_STR_LEN("Token"));
-	if (!b) return NULL;
+	if (!b) goto error;
 
 	size_t len = strlen(b->ptr);
 	if (li_hex2bin((uint8_t *)token, size, b->ptr, len)) {
-		return NULL;
+		goto error;
 	}
 
 	buffer *token_buf = buffer_init();
-	buffer_append_string_encoded_hex_lc(token_buf, (char *)token, size);
+	buffer_copy_string(token_buf, b->ptr);
 	return token_buf;
+error:
+	log_error(r->conf.errh, __FILE__, __LINE__, "extract token error");
+	return NULL;
 }
 
 static inline void access_token_set_env(request_st *r, access_token_sptree_node_t* spn)
@@ -419,9 +428,7 @@ URIHANDLER_FUNC(module_uri_handler) {
 	if (!r->uri.path.ptr) goto    NO_AUTH_401;
 
 	const unix_time64_t cur_ts = log_monotonic_secs;
-
-
-	if(!p->conf.auth_url || buffer_is_equal(&r->uri.path, p->conf.auth_url)) {
+	if(p->conf.auth_url && buffer_is_equal(&r->uri.path, p->conf.auth_url)) {
 		/* /api/user/login to request token */
 		char username[33];
 		if(authorization_extract_user(r, username, sizeof(username))) {
@@ -429,7 +436,7 @@ URIHANDLER_FUNC(module_uri_handler) {
 		}
 
 		struct UserInfo info;
-		if(!get_user_info_from_backend(username, &info)) {
+		if(get_user_info_from_backend(username, &info)) {
 			goto NO_AUTH_401;
 		}
 
@@ -461,7 +468,7 @@ URIHANDLER_FUNC(module_uri_handler) {
 		goto NO_AUTH_401;
     }
 
-	if (!p->conf.deauth_url || buffer_is_equal(&r->uri.path, p->conf.deauth_url)) {
+	if (p->conf.deauth_url && buffer_is_equal(&r->uri.path, p->conf.deauth_url)) {
 		/* /api/user/logout to release the token */
 		char* str = api_logout_response(token, spn->role, spn->username);
 		if (str) {
@@ -503,6 +510,7 @@ static void sptree_tag_old_entries(const splay_tree * const t, const unix_time64
     if (spn->ts < expire) keys[(*ndx)++] = t->key;
 }
 
+
 static void sptree_expire_nodes(plugin_data * const p, const unix_time64_t expire) {
     // assert(p->sptree);
     size_t max_ndx = 0;
@@ -519,6 +527,7 @@ static void sptree_expire_nodes(plugin_data * const p, const unix_time64_t expir
     free(keys);
 }
 
+
 TRIGGER_FUNC(module_trigger) {
     plugin_data * const p = p_d;
 
@@ -534,24 +543,16 @@ TRIGGER_FUNC(module_trigger) {
     return HANDLER_GO_ON;
 }
 
+
 int mod_access_token_plugin_init(plugin *p);
 int mod_access_token_plugin_init(plugin *p) {
     p->version          = LIGHTTPD_VERSION_ID;
     p->name             = "access_token";
     p->init             = module_init;
     p->set_defaults     = module_set_defaults;
-    // p->cleanup          = module_free;
+    p->cleanup          = module_free;
     p->handle_trigger   = module_trigger;
     p->handle_uri_clean = module_uri_handler;
 
     return 0;
 }
-
-
-// log_error(r->conf.errh, __FILE__, __LINE__, "access token set default");
-// log_error(r->conf.errh, __FILE__, __LINE__, "enable:%d", p->conf.enable);
-// log_error(r->conf.errh, __FILE__, __LINE__, "token_timeout:%d", p->conf.token_timeout);
-// log_error(r->conf.errh, __FILE__, __LINE__, "token_number:%d", p->conf.token_number);
-// log_error(r->conf.errh, __FILE__, __LINE__, "refresh_timeout:%d", p->conf.refresh_timeout);
-// log_error(r->conf.errh, __FILE__, __LINE__, "auth_url:%s", p->conf.auth_url ?p->conf.auth_url->ptr : "null");
-// log_error(r->conf.errh, __FILE__, __LINE__, "deauth_url:%s", p->conf.deauth_url ?p->conf.deauth_url->ptr : "null");

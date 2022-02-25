@@ -30,10 +30,7 @@
 
 #include "cJSON.h"
 #include "mod_api/mqtt_bus_query.h"
-
-
-
-
+#include "mod_api/ra_api.h"
 
 
 typedef struct {
@@ -196,425 +193,198 @@ SUBREQUEST_FUNC(mod_api_subrequest) {
     return rc;
 }
 
-
-struct HttpMeta {
-	char* uri;
-	PayloadBuf* payload;
-	buffer* username;
-	unsigned   role;
-};
-struct MqttMeta {
-	char topic[128];
-	PayloadBuf* payload;
-};
-struct HttpToMqtt;
-struct HttpLocal;
-
-typedef int (*http_and_mqtt_switch)(struct HttpToMqtt* m, struct HttpMeta* http_meta, struct MqttMeta* mqtt_meta, int* n);
-
-typedef int (*http_local_handler)(struct HttpLocal* m, struct HttpMeta* http_meta, void* ptr);
-
-
-struct HttpToMqtt {
-	struct HttpMeta h_meta;
-	struct MqttMeta m_meta[4];
-	http_and_mqtt_switch down_switch_func;
-	http_and_mqtt_switch up_switch_func;
-};
-
-struct HttpLocal {
-	struct HttpMeta h_meta;
-	http_local_handler local_handler;
-};
-
-struct ModuleAdapter {
-	int id;
-	char* root_uri;
-	int n;
-	struct HttpToMqtt* proxy;
-	struct HttpLocal* local;
-};
-
-
-
-
-static int down_systemBaseInfo(struct HttpToMqtt* m, struct HttpMeta* http_meta, struct MqttMeta* mqtt_meta, int* n)
-{
-	(void)m;
-
-	*n = 0;
-	if (!http_meta || !http_meta->payload || !mqtt_meta) {
-		return -1;
-	}
-
-	//cJSON* root = cJSON_Parse (http_meta->payload);
-	cJSON* root = http_meta->payload;
-	if (!root) {
-		return -1;
-	}
-	
-	cJSON* body = cJSON_GetObjectItem(root, "body");
-	if (!body) {
-		return -1;
-	}
-
-	cJSON* op = cJSON_GetObjectItem(body, "operation");
-	if (!op) {
-		return -1;
-	}
-	char* op_str = cJSON_GetStringValue(op);
-	if (!op_str || strncmp(op_str, "get", strlen("get")+1)) {
-		return -1;
-	}
-	snprintf(mqtt_meta[0].topic, sizeof(mqtt_meta[0].topic),
-			"%s%s", "/web", m->m_meta[0].topic);
-
-
-	FREE_PAYLOAD(http_meta->payload);
-	http_meta->payload = NULL;
-	mqtt_meta[0].payload = NULL;
-	*n = 1;
-	return 0;
-}
-
-
-
-static int up_systemBaseInfo(struct HttpToMqtt* m, struct HttpMeta* http_meta, struct MqttMeta* mqtt_meta, int* n)
-{
-	(void)m;
-	(void)n;
-	if (!http_meta || !mqtt_meta || !n) {
-		return -1;
-	}
-
-	//cJSON* root = cJSON_Parse (http_meta->payload);
-	cJSON* root = mqtt_meta[0].payload;
-	if (!root) {
-		return -1;
-	}
-	char* str  = cJSON_Print(root);
-	if (str) {
-		fprintf(stderr, "up root:%s\n", str);
-	}
-	
-	cJSON* body = cJSON_GetObjectItem(root, "body");
-	if (!body) {
-		FREE_PAYLOAD(mqtt_meta[0].payload);
-		return -1;
-	}
-
-	cJSON_DeleteItemFromObject(body, "electronicTag");
-	cJSON_DeleteItemFromObject(body, "rebootTime");
-	cJSON_DeleteItemFromObject(root, "token");
-
-	http_meta->payload = root;
-	return 0;
-}
-
-
-int local_info_token(struct HttpLocal* m, struct HttpMeta* http_meta, void* ptr)
-{
-	(void)ptr;
-	(void)m;
-	/* todo check payload */
-
-	// todo get info from database with name
-
-	cJSON *root, *body;
-	root = cJSON_CreateObject();
-	cJSON_AddNumberToObject(root, "statusCode", 200);
-	cJSON_AddStringToObject(root, "statusDesc", "OK");
-
-	body = cJSON_CreateObject();
-	cJSON_AddStringToObject(body, "username", "ypp");
-	cJSON_AddStringToObject(body, "description", "man");
-
-    const char *strings[1] ={ "admin"};
-	cJSON_AddItemToObject(body, "roles", cJSON_CreateStringArray(strings, 1));
-
-	cJSON_AddItemToObject(root, "body", body);
-	http_meta->payload = root;
-	return 0;
-}
-
-
-
-int local_updatePw(struct HttpLocal* m, struct HttpMeta* http_meta, void* ptr)
-{
-	(void)ptr;
-	(void)m;
-	/* todo check payload */
-
-	// todo get info from database with name
-
-	cJSON *root, *body;
-	root = cJSON_CreateObject();
-	cJSON_AddNumberToObject(root, "statusCode", 200);
-	cJSON_AddStringToObject(root, "statusDesc", "OK");
-	cJSON_AddStringToObject(root, "timestamp", "2021-11-02 18:00:00");
-	http_meta->payload = root;
-	return 0;
-}
-
-
-int local_info_list(struct HttpLocal* m, struct HttpMeta* http_meta, void* ptr)
-{
-	(void)ptr;
-	(void)m;
-	/* todo check payload */
-
-	// todo get info from database with name
-
-	cJSON *root, *body, *arr, *tmp;
-	root = cJSON_CreateObject();
-	cJSON_AddNumberToObject(root, "statusCode", 200);
-	cJSON_AddStringToObject(root, "statusDesc", "OK");
-	cJSON_AddStringToObject(root, "timestamp", "2021-11-02 18:00:00");
-
-	arr = cJSON_CreateArray();
-
-	tmp = cJSON_CreateObject();
-	cJSON_AddStringToObject(tmp, "username", "admin");
-	cJSON_AddNumberToObject(tmp, "userId", 1);
-	cJSON_AddStringToObject(tmp, "userType", "admin");
-	cJSON_AddItemToArray(arr, tmp);
-
-	tmp = cJSON_CreateObject();
-	cJSON_AddStringToObject(tmp, "username", "user");
-	cJSON_AddNumberToObject(tmp, "userId", 2);
-	cJSON_AddStringToObject(tmp, "userType", "operator");
-	cJSON_AddItemToArray(arr, tmp);
-	
-
-	body = cJSON_CreateObject();
-	cJSON_AddItemToObject(body, "list", arr);
-	cJSON_AddNumberToObject(body, "number", 2);
-
-	cJSON_AddItemToObject(root, "body", body);
-
-	http_meta->payload = root;
-	return 0;
-}
-
-
-static struct HttpLocal m_user[] = {
-	{
-		.h_meta = {.uri = "info/token", .role = 1,},
-		.local_handler = local_info_token,
-	},
-	{
-		.h_meta = {.uri = "updatePw", .role = 1,},
-		.local_handler = local_updatePw,
-	},
-	{
-		.h_meta = {.uri = "info/list", .role = 1,},
-		.local_handler = local_info_list,
-	},
-	
-};
-
-static struct HttpToMqtt m_system[] = {
-	{
-		.h_meta = {.uri = "systemBaseInfo", .role = 1,},
-		.m_meta = {{.topic = "/get/request/rasdk/deviceInfo",}},
-		.down_switch_func = down_systemBaseInfo,
-		.up_switch_func = up_systemBaseInfo,
-	}
-};
-
-
-static struct ModuleAdapter adapter[] = {
-	{
-		.id = 1,
-		.root_uri = "/api/user/",
-		.n = 3,
-		.local = m_user,
-	},
-	{
-		.id = 2,
-		.root_uri = "/api/system/",
-		.n = 1,
-		.proxy = m_system,
-	},
-
-};
-#define MSZIE (int)(sizeof(adapter) / sizeof(adapter[0]))
-
-
 static int get_env_username_role(request_st *r, buffer **username, unsigned* role)
 {
+#if 1
+	(void)r;
+	*username = buffer_init();
+	buffer_copy_string(*username, "linuxing");
+	*role = 0x1;
+	return 0;
+#else
 	*role = 0;
 	*username = NULL;
 
 	buffer *us, *ro;
     us = http_header_env_get(r, CONST_STR_LEN("username"));
-	if (!us || !us->ptr) return -1;
+	if (!us || !us->ptr) goto error;
 	*username = us;
 
     ro = http_header_env_get(r, CONST_STR_LEN("role"));
-	if (!ro || !ro->ptr) return -1;
+	if (!ro || !ro->ptr) goto error;
 
 	char *endptr;
 	*role = strtol(ro->ptr, &endptr, 16);
 	if (ro->ptr == endptr) {
+		goto error;
+	}
+	return 0;
+
+error:
+	log_error(r->conf.errh, __FILE__, __LINE__, "get username role error\n");
+	return -1;
+#endif
+}
+
+static inline int api_access_right_check(struct HttpMeta* meta, unsigned role)
+{
+	int ret = (meta->role & role) ? 1 : 0;
+	if (ret == 0) {
+		fprintf(stderr, "no access_right %s\n", meta->uri);
+	}
+	return ret;
+}
+
+
+static int fill_http_meta(request_st *r, struct HttpMeta* meta)
+{
+	if (get_env_username_role(r, &meta->username, &meta->role)) {
 		return -1;
 	}
+
+	meta->payload = read_http_json_body(r);
 	return 0;
 }
 
+static  char* api_sample_response(int code, char* desc)
+{
+	cJSON* root = cJSON_CreateObject();
+	cJSON_AddNumberToObject(root, "statusCode", code);
+	if (desc) {
+		cJSON_AddStringToObject(root, "statusDesc", desc);
+	}
+
+	cJSON_AddStringToObject(root, "timestamp", "2021-11-02 18:00:00");
+	return cJSON_Print(root);
+}
+
+static char* local_request_handle(struct HttpLocal* handle, struct HttpMeta* meta, void* ptr)
+{
+	(void) ptr;
+	if (!handle || !meta) goto error;
+
+	if(!api_access_right_check(&handle->h_meta, meta->role)) {
+		goto error;
+	}
+
+	int ret = handle->local_handler(handle, meta, NULL);
+	if (ret != 0 || !meta->payload) {
+		goto error;
+	}
+
+	char* string = cJSON_Print(meta->payload);
+	FREE_PAYLOAD(meta->payload);
+	return string;
+error:
+	return api_sample_response(500, "Failed");
+}
+
+
+
+
+
+static char* proxy_request_handle(struct HttpToMqtt* handle, struct HttpMeta* meta, void* ptr)
+{
+	if (!handle || !meta || !ptr) {
+		return api_sample_response(501, "Failed");
+	};
+
+	if(!api_access_right_check(&handle->h_meta, meta->role)) {
+		return api_sample_response(400, "Failed");
+	}
+
+	plugin_data *p = ptr;
+	struct MqttMeta mmeta[4];
+
+	/* downstream switch */
+	memcpy(mmeta, handle->m_meta, sizeof(mmeta));
+	int topic_num = 4;
+	int ret = handle->down_switch_func(handle, meta, &mmeta[0], &topic_num);
+	if (ret != 0) {
+		fprintf(stderr, "%s:%d error, down switch func return:%d\n", __FILE__, __LINE__, ret);
+		goto error;
+	}
+
+	/* proxy to mqtt */
+	int i;
+	for (i = 0; p->mbud_fp && i < topic_num; i++) {
+		PayloadBuf* rsp = query_simple(p->mbud_fp, mmeta[i].topic, mmeta[i].payload);
+		FREE_PAYLOAD(mmeta[i].payload);
+		if (!rsp) {
+			fprintf(stderr,"%s:%d query error :%s\n",   __FILE__, __LINE__, mmeta[i].topic);
+			goto error;
+		}
+		mmeta[i].payload = rsp;	
+	}
+
+	/* upstream switch */
+	ret = handle->up_switch_func(handle, meta, &mmeta[0], &topic_num);
+	if (ret != 0) {
+		fprintf(stderr, "%s:%d error, up switch func return:%d\n", __FILE__, __LINE__, ret);
+		goto error;
+	}
+
+	if (!meta->payload) goto error;
+	char* str = cJSON_Print(meta->payload);
+	fprintf(stderr, "%s:%d error, up switch func return:%s\n", __FILE__, __LINE__, str);
+	// clean_http_meta(meta, 1);
+	// clean_mqtt_meta(mmeta, 4);
+	return str;
+
+error:
+	// clean_http_meta(meta, 1);
+	// clean_mqtt_meta(mmeta, 4);
+	return api_sample_response(500, "Failed");
+}
+
+
+
+
+
 URIHANDLER_FUNC(mod_api_uri_handler) {
     plugin_data *p = p_d;
-	int index, ret, i;
+	int req_type, ret;
 
-	log_error(r->conf.errh, __FILE__, __LINE__, "--------1uri:%s---------", r->uri.path.ptr);
-	if(!r->uri.path.ptr) {
-		r->http_status = 401;
-		r->resp_body_finished = 1;
-		return HANDLER_FINISHED;
+	void* ptr = NULL;
+	req_type = adapter_find_request(&r->uri.path, &ptr);
+	if (req_type < 0) {
+		goto BAD_REQ_400;
 	}
-	
-	/* find the mode */
-	char* uri = r->uri.path.ptr;
-	for (i = 0; i < MSZIE; i++) {
-		if (!strncmp(uri, adapter[i].root_uri, strlen(adapter[i].root_uri))) {
-			break;
-		}
-	}
-	if (i == MSZIE) {
-		r->http_status = 404;
-		r->resp_body_finished = 1;
-		log_error(r->conf.errh, __FILE__, __LINE__, "not find the module\n");
-		return HANDLER_FINISHED;
-	}
-	index = i;
-	uri += strlen(adapter[i].root_uri);
-
-
 
 	struct HttpMeta http_meta;
-	http_meta.payload = read_http_json_body(r);
-	// if (get_env_username_role(r, &http_meta.username, &http_meta.role)) {
-	// 	r->http_status = 401;
-	// 	r->resp_body_finished = 1;
-	// 	log_error(r->conf.errh, __FILE__, __LINE__, "not find the username and role\n");
-	// 	return HANDLER_FINISHED;
-	// }
-
-	if (adapter[index].local) {
-		struct HttpLocal* local = adapter[index].local;
-		for (i = 0; i < adapter[index].n; i++) {
-			if (!strncmp(uri, local[i].h_meta.uri, strlen(local[i].h_meta.uri) + 1)) {
-				break;
-			}
-		}
-		local = local + i;
-
-		if (i == adapter[index].n) {
-			r->http_status = 404;
-			r->resp_body_finished = 1;
-			log_error(r->conf.errh, __FILE__, __LINE__, "not find the uri\n");
-			return HANDLER_FINISHED;
-		}
-
-		/* no access right to call the api */
-		// if (!(local->h_meta.role & http_meta.role)) {
-		// 	r->http_status = 404;
-		// 	r->resp_body_finished = 1;
-		// 	log_error(r->conf.errh, __FILE__, __LINE__, "no access right to call uri\n");
-		// 	return HANDLER_FINISHED;
-		// }
-
-		ret = local->local_handler(local, &http_meta, NULL);
-		if (http_meta.payload) {
-			char* str = cJSON_Print(http_meta.payload);
-			if (str) {
-				http_chunk_append_mem(r, str, strlen(str));
-				free(str);
-			}
-			FREE_PAYLOAD(http_meta.payload);
-		}
-		else {
-			log_error(r->conf.errh, __FILE__, __LINE__, "no http payload\n");
-		}
-
-		r->http_status = 200;
-		r->resp_body_finished = 1;
-		return HANDLER_FINISHED;
+	ret = fill_http_meta(r, &http_meta);
+	if (ret < 0) {
+		goto BAD_REQ_400;
 	}
-	
-	if (adapter[index].proxy) {
 
-		/* find secondary uri handler */
-		struct HttpToMqtt* proxy = adapter[index].proxy;
-		for (i = 0; i < adapter[index].n; i++) {
-			if (!strncmp(uri, proxy[i].h_meta.uri, strlen(proxy[i].h_meta.uri) + 1)) {
-				break;
-			}
-		}
-		proxy = proxy + i;
-
-
-		/* not find */
-		if (i == adapter[index].n) {
-			r->http_status = 404;
-			r->resp_body_finished = 1;
-			log_error(r->conf.errh, __FILE__, __LINE__, "not req find the uri\n");
-			return HANDLER_FINISHED;
-		}
-
-		/* no access right to call the api */
-		// if (!(proxy->h_meta.role & http_meta.role)) {
-		// 	r->http_status = 404;
-		// 	r->resp_body_finished = 1;
-		// 	log_error(r->conf.errh, __FILE__, __LINE__, "no access right to call uri\n");
-		// 	return HANDLER_FINISHED;
-		// }
-
-		struct MqttMeta mmeta[4];
-		memcpy(mmeta, proxy->m_meta, sizeof(mmeta));
-		int topic_num = 4;
-
-		ret = proxy->down_switch_func(proxy, &http_meta, &mmeta[0], &topic_num);
-		log_error(r->conf.errh, __FILE__, __LINE__, "down switch func return:%d\n", ret);
-
-		for (i = 0; i < topic_num; i++) {
-			// todo query( topic and payload)
-			// connect response
-			if(p->mbud_fp) {
-				// PayloadBuf* rsp = query_simple(p->mbud_fp, 
-				// 		"/web/set/request/rasdk/deviceInfo", NULL);
-				PayloadBuf* rsp = query_simple(p->mbud_fp, mmeta[i].topic, mmeta[i].payload);
-				FREE_PAYLOAD(mmeta[i].payload);
-				if (!rsp) {
-					log_error(r->conf.errh, __FILE__, __LINE__, "query error :%s\n",  mmeta[i].topic);
-				}
-				else {
-					mmeta[i].payload = rsp;
-				}
-			}
-		}
-		ret = proxy->up_switch_func(proxy, &http_meta, &mmeta[0], &topic_num);
-		log_error(r->conf.errh, __FILE__, __LINE__, "up switch func return:%d\n", ret);
-		if (http_meta.payload) {
-			char* str = cJSON_Print(http_meta.payload);
-			if (str) {
-				http_chunk_append_mem(r, str, strlen(str));
-				free(str);
-			}
-			FREE_PAYLOAD(http_meta.payload);
-		}
-		else {
-			log_error(r->conf.errh, __FILE__, __LINE__, "no rsp http payload\n");
-		}
-
-		r->http_status = 200;
-		r->resp_body_finished = 1;
-		return HANDLER_FINISHED;
+	char* str = NULL;
+	if (req_type == 1) {
+		str = proxy_request_handle((struct HttpToMqtt*)ptr, &http_meta, p);
 	}
+	else {
+		str = local_request_handle((struct HttpLocal*)ptr, &http_meta, NULL);
+	}
+
+	if (str) {
+		http_chunk_append_mem(r, str, strlen(str));
+		free(str);
+		str = NULL;
+	}
+	else {
+		http_chunk_append_mem(r, "{mmmmm}", strlen("{mmmmm}"));
+	}
+
+	r->http_status = 200;
+	r->resp_body_finished = 1;
+	return HANDLER_FINISHED;
 
 	log_error(r->conf.errh, __FILE__, __LINE__, "no handler goon\n");
-
 	return HANDLER_GO_ON;
+
+BAD_REQ_400:
+	r->http_status = 400;
+	r->resp_body_finished = 1;
+	return HANDLER_FINISHED;
 }
 
 
@@ -631,7 +401,5 @@ int mod_api_plugin_init(plugin *p) {
 	p->init           = mod_api_init;
 	p->cleanup        = mod_api_free;
 	p->set_defaults   = mod_api_set_defaults;
-
-    printf("%s:%d--------plugin init---------\n", __FILE__, __LINE__);
 	return 0;
 }

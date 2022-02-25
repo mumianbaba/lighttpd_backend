@@ -1,10 +1,12 @@
+#include <stdio.h>
+
 #include "mod_api/db_query.h"
+#include "log.h"
 
 int get_user_info_from_backend(const char* username, struct UserInfo* info)
 {
-	if (!username || !info) {
-		return -1;
-	}
+	if (!username || !info) goto error;
+
 	info->username = buffer_init();
 	//info->user_type = buffer_init();
 	info->roles = buffer_init();
@@ -18,6 +20,10 @@ int get_user_info_from_backend(const char* username, struct UserInfo* info)
 	buffer_copy_string(info->roles, "admin");
 	buffer_copy_string(info->digest, "e1a39c9735d42a2d203b8b9732f3f795");
 	return 0;
+
+error:
+	fprintf(stderr, "%s %d get user info backend failed\n", __func__, __LINE__);
+	return -1;
 }
 
 void clean_user_info(struct UserInfo* info)

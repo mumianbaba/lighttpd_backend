@@ -938,7 +938,7 @@ add_and_install_library(mod_usertrack mod_usertrack.c)
 add_and_install_library(mod_vhostdb "mod_vhostdb.c;mod_vhostdb_api.c")
 add_and_install_library(mod_webdav mod_webdav.c)
 add_and_install_library(mod_wstunnel mod_wstunnel.c)
-add_and_install_library(mod_api "mod_api.c;mod_api/mqtt_bus_query.c" )
+add_and_install_library(mod_api "mod_api.c;mod_api/mqtt_bus_query.c;mod_api/ra_api.c" )
 add_and_install_library(mod_access_token "mod_access_token.c;mod_api/db_query.c")
 
 add_executable(test_configfile
