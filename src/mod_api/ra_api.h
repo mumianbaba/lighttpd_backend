@@ -9,17 +9,35 @@
 #include "mqtt_bus/mbus_api.h"
 #include "mqtt_bus/mbus_log.h"
 
+#define REQ_FLAG_GET 0x1
+#define REQ_FLAG_SET 0x2
+
+
+struct KeyPair{
+	int flag;
+	char* key1;
+	char* key2;
+};
+
+struct PairList {
+	struct KeyPair* list;
+	int n;
+};
 
 struct HttpMeta {
 	char* uri;
 	PayloadBuf* payload;
 	buffer* username;
 	unsigned   role;
+	int       flag;
 };
 struct MqttMeta {
 	char topic[128];
 	PayloadBuf* payload;
+	struct PairList pair;
 };
+
+
 struct HttpToMqtt;
 struct HttpLocal;
 
@@ -33,11 +51,15 @@ struct HttpToMqtt {
 	struct MqttMeta m_meta[4];
 	http_and_mqtt_switch down_switch_func;
 	http_and_mqtt_switch up_switch_func;
+	char* test[4];
+	cJSON* conf;
 };
 
 struct HttpLocal {
 	struct HttpMeta h_meta;
 	http_local_handler local_handler;
+	char* test[4];
+	cJSON* conf;
 };
 
 struct ModuleAdapter {
@@ -48,11 +70,14 @@ struct ModuleAdapter {
 	struct HttpLocal* local;
 };
 
+void adapter_test_init(void);
 
 int adapter_find_request(buffer* uri, void** ptr);
 void clean_http_meta(struct HttpMeta* meta, int n);
 void clean_mqtt_meta(struct MqttMeta* meta, int n);
 
+int down_common_handle(struct HttpToMqtt* m, struct HttpMeta* http_meta, struct MqttMeta* mqtt_meta, int* n);
+int up_common_handle(struct HttpToMqtt* m, struct HttpMeta* http_meta, struct MqttMeta* mqtt_meta, int* n);
 
 int down_systemBaseInfo(struct HttpToMqtt* m, struct HttpMeta* http_meta, struct MqttMeta* mqtt_meta, int* n);
 int up_systemBaseInfo(struct HttpToMqtt* m, struct HttpMeta* http_meta, struct MqttMeta* mqtt_meta, int* n);
@@ -122,8 +147,8 @@ if (!body) {\
 #define JSON_ROOT_ADD_NUM(a, b)   cJSON_AddNumberToObject(root, a, b)
 
 
-#define JOINT_TOPIC(a, n, c) snprintf(a, n, "%s%s", "/web", c)
-
+#define JOINT_GET_TOPIC(a, n, c) (void)snprintf(a, n, "%s%s", "internalBus/web/get/", c)
+#define JOINT_SET_TOPIC(a, n, c) (void)snprintf(a, n, "%s%s", "internalBus/web/set/", c)
 
 #endif
 

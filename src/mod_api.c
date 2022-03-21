@@ -31,6 +31,7 @@
 #include "cJSON.h"
 #include "mod_api/mqtt_bus_query.h"
 #include "mod_api/ra_api.h"
+#define PRINT_ERR(fmt, ...)  fprintf(stderr, fmt, ##__VA_ARGS__)
 
 
 typedef struct {
@@ -63,7 +64,7 @@ static cJSON* read_http_json_body(request_st * const r)
 		return NULL;
 	}
 
-	char* body = calloc(1, body_len);
+	char* body = calloc(1, body_len + 1);
 	if (chunkqueue_read_data(&r->read_queue, body, body_len, r->conf.errh) < 0) {
 		log_error(r->conf.errh, __FILE__, __LINE__, "read body failed");
 		free(body);
@@ -71,7 +72,7 @@ static cJSON* read_http_json_body(request_st * const r)
 	}
 
 	log_error(r->conf.errh, __FILE__, __LINE__, "read http body:%s", body);
-	cJSON* payload = cJSON_Parse(body);
+	cJSON* payload = cJSON_ParseWithLength(body, body_len + 1);
 	free(body);
 	return payload;
 }
@@ -99,6 +100,7 @@ INIT_FUNC(mod_api_init) {
 	
 	force_assert(p);
 
+	adapter_test_init();
 	/* todo period check mbus status */
 	struct MBusInitAttr attr;
 	int timeout = 4;
@@ -258,22 +260,61 @@ static  char* api_sample_response(int code, char* desc)
 	return cJSON_Print(root);
 }
 
-static char* local_request_handle(struct HttpLocal* handle, struct HttpMeta* meta, void* ptr)
+
+static int test_fake_bankend(void *handle, struct HttpMeta* http_meta, int type)
+{
+	// local handle
+	if (type == 0) {
+		struct HttpLocal* h = handle;
+		if (h->test[0] && http_meta->flag & REQ_FLAG_GET) {
+			return cJSON_Print(h->conf);
+		}
+		if (h->test[1] && http_meta->flag & REQ_FLAG_SET) {
+			h->conf = http_meta->payload;
+			cJSON* body = cJSON_GetObjectItem(http_meta->payload, "body");
+			cJSON_DeleteItemFromObject(body, "operation")
+			return strdup(h->test[1]);
+		}
+	}
+	else {
+		struct HttpToMqtt* h = handle;
+		if (h->test[0] && http_meta->flag & REQ_FLAG_GET) {
+			return cJSON_Print(h->conf);
+		}
+		if (h->test[1] && http_meta->flag & REQ_FLAG_SET) {
+			h->conf = http_meta->payload;
+			return strdup(h->test[1]);
+		}
+	}
+	return NULL;
+}
+
+static char* local_request_handle(struct HttpLocal* handle, struct HttpMeta* http_meta, void* ptr)
 {
 	(void) ptr;
-	if (!handle || !meta) goto error;
+	if (!handle || !http_meta) goto error;
 
-	if(!api_access_right_check(&handle->h_meta, meta->role)) {
+	if(!api_access_right_check(&handle->h_meta, http_meta->role)) {
 		goto error;
 	}
 
-	int ret = handle->local_handler(handle, meta, NULL);
-	if (ret != 0 || !meta->payload) {
+	JSON_GET_OP();
+	if (JSON_OP_IS("get")) {
+		http_meta->flag |= REQ_FLAG_GET;
+	}
+	else if (JSON_OP_IS("set") || JSON_OP_IS("update")) {
+		http_meta->flag |= REQ_FLAG_SET;
+	}
+
+
+
+	int ret = handle->local_handler(handle, http_meta, NULL);
+	if (ret != 0 || !http_meta->payload) {
 		goto error;
 	}
 
-	char* string = cJSON_Print(meta->payload);
-	FREE_PAYLOAD(meta->payload);
+	char* string = cJSON_Print(http_meta->payload);
+	FREE_PAYLOAD(http_meta->payload);
 	return string;
 error:
 	return api_sample_response(500, "Failed");
@@ -282,24 +323,59 @@ error:
 
 
 
-
-static char* proxy_request_handle(struct HttpToMqtt* handle, struct HttpMeta* meta, void* ptr)
+static inline int get_mqtt_meta_num(struct MqttMeta* meta, int max)
 {
-	if (!handle || !meta || !ptr) {
+	int i;
+	for(i = 0; i < max; i++) {
+		if(!meta[i].topic || meta[i].topic[0] == '\0') {
+			break;
+		}
+	}
+	return i;
+}
+
+
+static char* proxy_request_handle(struct HttpToMqtt* handle, struct HttpMeta* http_meta, void* ptr)
+{
+	if (!handle || !http_meta || !ptr) {
 		return api_sample_response(501, "Failed");
 	};
 
-	if(!api_access_right_check(&handle->h_meta, meta->role)) {
+	if(!api_access_right_check(&handle->h_meta, http_meta->role)) {
 		return api_sample_response(400, "Failed");
 	}
 
-	plugin_data *p = ptr;
-	struct MqttMeta mmeta[4];
+	// get request type
+	{
+		JSON_GET_OP();
+		if (JSON_OP_IS("get")) {
+			http_meta->flag |= REQ_FLAG_GET;
+		}
+		else if (JSON_OP_IS("set") || JSON_OP_IS("update")) {
+			http_meta->flag |= REQ_FLAG_SET;
+		}	
+	}
 
+	// test for frontend
+	PRINT_ERR ("test[0]:%p test[1]:%p http_meta->flag:%x\n", handle->test[0], handle->test[1], http_meta->flag);
+	if (handle->test[0] && http_meta->flag & REQ_FLAG_GET) {
+		return cJSON_Print(handle->conf);
+	}
+	if (handle->test[1] && http_meta->flag & REQ_FLAG_SET) {
+		handle->conf = http_meta->payload;
+		return strdup(handle->test[1]);
+	}
+
+
+	plugin_data *p = ptr;
 	/* downstream switch */
+	struct MqttMeta mmeta[8];
 	memcpy(mmeta, handle->m_meta, sizeof(mmeta));
-	int topic_num = 4;
-	int ret = handle->down_switch_func(handle, meta, &mmeta[0], &topic_num);
+	int topic_num = 
+		get_mqtt_meta_num(mmeta, sizeof(mmeta) / sizeof(mmeta[0]));
+
+	fprintf (stderr, "the mqtt http_meta num:%d\n", topic_num);
+	int ret = handle->down_switch_func(handle, http_meta, &mmeta[0], &topic_num);
 	if (ret != 0) {
 		fprintf(stderr, "%s:%d error, down switch func return:%d\n", __FILE__, __LINE__, ret);
 		goto error;
@@ -318,22 +394,23 @@ static char* proxy_request_handle(struct HttpToMqtt* handle, struct HttpMeta* me
 	}
 
 	/* upstream switch */
-	ret = handle->up_switch_func(handle, meta, &mmeta[0], &topic_num);
+	ret = handle->up_switch_func(handle, http_meta, &mmeta[0], &topic_num);
 	if (ret != 0) {
 		fprintf(stderr, "%s:%d error, up switch func return:%d\n", __FILE__, __LINE__, ret);
 		goto error;
 	}
 
-	if (!meta->payload) goto error;
-	char* str = cJSON_Print(meta->payload);
+	if (!http_meta->payload) goto error;
+	char* str = cJSON_Print(http_meta->payload);
 	fprintf(stderr, "%s:%d error, up switch func return:%s\n", __FILE__, __LINE__, str);
-	// clean_http_meta(meta, 1);
+	// clean_http_meta(http_meta, 1);
 	// clean_mqtt_meta(mmeta, 4);
 	return str;
 
 error:
-	// clean_http_meta(meta, 1);
+	// clean_http_meta(http_meta, 1);
 	// clean_mqtt_meta(mmeta, 4);
+
 	return api_sample_response(500, "Failed");
 }
 
@@ -352,6 +429,8 @@ URIHANDLER_FUNC(mod_api_uri_handler) {
 	}
 
 	struct HttpMeta http_meta;
+	memset(&http_meta, 0, sizeof(http_meta));
+
 	ret = fill_http_meta(r, &http_meta);
 	if (ret < 0) {
 		goto BAD_REQ_400;
